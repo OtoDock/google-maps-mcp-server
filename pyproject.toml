@@ -1,7 +1,7 @@
 [project]
 name = "google-maps-mcp-server"
-version = "0.2.1"
-description = "Production-ready MCP server for Google Maps Platform APIs - Directions, Places, Geocoding, Roads, and Distance Matrix"
+version = "0.2.2"
+description = "Production-ready MCP server for Google Maps Platform APIs - Directions, Places, Geocoding, Roads, and Distance Matrix (OtoDock fork: relay-aware + Places keyword fix)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
@@ -36,7 +36,6 @@ dependencies = [
     "structlog>=25.5.0",
     "httpx>=0.28.1",
     "google-adk>=1.19.0",
-    "google-maps-places>=0.5.0",
     "starlette>=0.37.0",
     "uvicorn[standard]>=0.29.0",
     "sse-starlette>=2.1.0",

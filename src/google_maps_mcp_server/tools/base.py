@@ -19,15 +19,35 @@ from ..config import Settings
 logger = structlog.get_logger()
 
 
+def build_gmaps_client(settings: Settings) -> googlemaps.Client:
+    """Build the googlemaps client — OtoDock-relay-aware.
+
+    Hosted (relay): point the client at the OtoDock relay and pass the per-user
+    session token via the ``X-OtoDock-Relay-Token`` header; the relay injects the
+    real Google Maps key, meters the call, and proxies to Google. The googlemaps
+    lib requires a non-empty key, so a placeholder is sent that the relay replaces.
+    BYO: the configured key against Google's default endpoint.
+    """
+    if settings.relay_enabled:
+        return googlemaps.Client(
+            # Placeholder key — the relay replaces ?key= with the real one. Must
+            # start with "AIza" to pass the googlemaps lib's key-format check.
+            key="AIzaSyOtoDockRelayPlaceholderKey000000000000",
+            base_url=settings.otodock_relay_base.rstrip("/") + "/google-maps",
+            timeout=30,
+            requests_kwargs={
+                "headers": {"X-OtoDock-Relay-Token": settings.otodock_relay_token},
+            },
+        )
+    return googlemaps.Client(key=settings.google_maps_api_key, timeout=30)
+
+
 class BaseTool(ABC):
     """Base class for all Google Maps tools."""
 
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.gmaps = googlemaps.Client(
-            key=settings.google_maps_api_key,
-            timeout=30,  # 30 second timeout
-        )
+        self.gmaps = build_gmaps_client(settings)
 
     @property
     @abstractmethod

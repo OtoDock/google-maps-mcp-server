@@ -5,9 +5,6 @@ from typing import Any
 
 import googlemaps
 import structlog
-from google.api_core import client_options
-from google.maps import places_v1
-from google.type import latlng_pb2
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from .base import BaseTool
@@ -79,11 +76,11 @@ class PlacesTool(BaseTool):
             lat = float(lat_str.strip())
             lng = float(lng_str.strip())
 
-            # Execute API call using new Places API
+            # Execute via Places Text Search (keyword-native — no client-side filter)
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 None,
-                lambda: self._search_nearby_new_api(lat, lng, radius, keyword, place_type),
+                lambda: self._search_text(lat, lng, radius, keyword, place_type),
             )
 
             # Format response
@@ -101,7 +98,7 @@ class PlacesTool(BaseTool):
             logger.error("places_search_failed", error=str(e))
             return self._format_response(None, status="error", error=str(e))
 
-    def _search_nearby_new_api(
+    def _search_text(
         self,
         lat: float,
         lng: float,
@@ -109,55 +106,35 @@ class PlacesTool(BaseTool):
         keyword: str,
         place_type: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Search nearby places using the new Places API."""
-        # Create client with API key authentication
-        opts = client_options.ClientOptions(api_key=self.settings.google_maps_api_key)
-        client = places_v1.PlacesClient(client_options=opts)
+        """Search places via the Places API **Text Search** (``gmaps.places``).
 
-        # Build the request
-        request = places_v1.SearchNearbyRequest(
-            location_restriction=places_v1.SearchNearbyRequest.LocationRestriction(
-                circle=places_v1.Circle(
-                    center=latlng_pb2.LatLng(latitude=lat, longitude=lng),
-                    radius=radius,
-                )
-            ),
-            included_types=[place_type] if place_type else [],
-            max_result_count=min(20, self.settings.max_results),
-            rank_preference=places_v1.SearchNearbyRequest.RankPreference.DISTANCE,
-        )
+        OtoDock fork fix: upstream used Nearby Search + a client-side substring
+        keyword filter, which dropped legitimate multi-word matches (e.g. "gas
+        station"). Text Search handles keywords natively — no client-side
+        filtering — and rides the same ``self.gmaps`` client, so it works through
+        the OtoDock relay (hosted) or a BYO key transparently.
+        """
+        kwargs: dict[str, Any] = {
+            "query": keyword,
+            "location": (lat, lng),
+            "radius": int(radius),
+        }
+        if place_type:
+            kwargs["type"] = place_type
 
-        # Add field mask to specify which fields to return
-        # This is required by the new API
-        field_mask = "places.displayName,places.formattedAddress,places.location,places.rating,places.types,places.id"
+        result = self.gmaps.places(**kwargs)
 
-        # Execute the search
-        response = client.search_nearby(
-            request=request, metadata=[("x-goog-fieldmask", field_mask)]
-        )
-
-        # Format results
-        places = []
-        for place in response.places:
-            # Filter by keyword if provided (new API doesn't have keyword parameter)
-            if keyword:
-                keyword_lower = keyword.lower()
-                display_name = place.display_name.text.lower() if place.display_name else ""
-                types_str = " ".join(place.types).lower() if place.types else ""
-                if keyword_lower not in display_name and keyword_lower not in types_str:
-                    continue
-
+        places: list[dict[str, Any]] = []
+        for place in (result.get("results") or [])[: self.settings.max_results]:
+            loc = (place.get("geometry") or {}).get("location") or {}
             places.append(
                 {
-                    "name": place.display_name.text if place.display_name else None,
-                    "address": place.formatted_address if place.formatted_address else None,
-                    "location": {
-                        "lat": place.location.latitude if place.location else None,
-                        "lng": place.location.longitude if place.location else None,
-                    },
-                    "rating": place.rating if hasattr(place, "rating") else None,
-                    "types": list(place.types) if place.types else [],
-                    "place_id": place.id if place.id else None,
+                    "name": place.get("name"),
+                    "address": place.get("formatted_address") or place.get("vicinity"),
+                    "location": {"lat": loc.get("lat"), "lng": loc.get("lng")},
+                    "rating": place.get("rating"),
+                    "types": place.get("types") or [],
+                    "place_id": place.get("place_id"),
                 }
             )
 
@@ -207,7 +184,7 @@ class PlaceDetailsTool(BaseTool):
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 None,
-                lambda: self._get_place_details_new_api(place_id, fields),
+                lambda: self._get_place_details(place_id, fields),
             )
 
             logger.info("place_details_retrieved", place_id=place_id)
@@ -221,107 +198,59 @@ class PlaceDetailsTool(BaseTool):
             logger.error("place_details_failed", error=str(e))
             return self._format_response(None, status="error", error=str(e))
 
-    def _get_place_details_new_api(
+    def _get_place_details(
         self, place_id: str, fields: list[str] | None = None
     ) -> dict[str, Any]:
-        """Get place details using the new Places API."""
-        opts = client_options.ClientOptions(api_key=self.settings.google_maps_api_key)
-        client = places_v1.PlacesClient(client_options=opts)
+        """Get place details via the Places API Details endpoint (``gmaps.place``).
 
-        request = places_v1.GetPlaceRequest(name=f"places/{place_id}")
-
-        # Default fields if not specified
-        if not fields:
-            fields = [
-                "displayName",
-                "formattedAddress",
-                "location",
-                "rating",
-                "types",
-                "id",
-                "nationalPhoneNumber",
-                "websiteUri",
-                "regularOpeningHours",
-                "priceLevel",
-                "userRatingCount",
-            ]
-
-        # Map simple field names to API field mask paths
-        field_mapping = {
-            "name": "displayName",
-            "address": "formattedAddress",
-            "location": "location",
+        OtoDock fork: uses the same ``self.gmaps`` client (relay-aware) as the rest
+        of the tools — no separate gapic client. Friendly short field names are
+        mapped to the lib's field names; unknown names pass through.
+        """
+        field_map = {
+            "name": "name",
+            "address": "formatted_address",
+            "location": "geometry",
             "rating": "rating",
-            "types": "types",
-            "id": "id",
-            "phone": "nationalPhoneNumber",
-            "website": "websiteUri",
-            "hours": "regularOpeningHours",
-            "price": "priceLevel",
-            "reviews": "userRatingCount",
+            "types": "type",
+            "id": "place_id",
+            "phone": "formatted_phone_number",
+            "website": "website",
+            "hours": "opening_hours",
+            "price": "price_level",
+            "reviews": "user_ratings_total",
+        }
+        default_fields = [
+            "name", "formatted_address", "geometry", "rating", "type", "place_id",
+            "formatted_phone_number", "website", "opening_hours", "price_level",
+            "user_ratings_total",
+        ]
+        lib_fields = (
+            [field_map.get(f, f) for f in fields] if fields else default_fields
+        )
+
+        result = self.gmaps.place(place_id=place_id, fields=lib_fields)
+        r = result.get("result") or {}
+        loc = (r.get("geometry") or {}).get("location") or {}
+
+        place_data: dict[str, Any] = {
+            "name": r.get("name"),
+            "address": r.get("formatted_address"),
+            "location": {"lat": loc.get("lat"), "lng": loc.get("lng")},
+            "rating": r.get("rating"),
+            "types": r.get("types") or [],
+            "place_id": r.get("place_id"),
+            "phone_number": r.get("formatted_phone_number"),
+            "website": r.get("website"),
+            "price_level": r.get("price_level"),
+            "user_ratings_total": r.get("user_ratings_total"),
         }
 
-        # Construct field mask
-        mask_parts = []
-        for f in fields:
-            # Handle both mapped and direct field names
-            api_field = field_mapping.get(f, f)
-            # Ensure 'places.' prefix if not present (though request usually needs just the field name,
-            # checking docs: for GetPlace, the field mask should be paths relative to the resource, e.g. 'id', 'displayName')
-            # Actually, for GetPlace, the fieldmask is passed in the 'read_mask' parameter or header?
-            # In the python client `get_place` method takes `metadata=[('x-goog-fieldmask', mask)]`?
-            # Let's check `get_place` signature. It takes `request`.
-            # The `search_nearby` example used metadata. `get_place` should be similar.
-            mask_parts.append(api_field)
-
-        # If user didn't provide valid fields, fallback to defaults
-        if not mask_parts:
-            mask_parts = list(field_mapping.values())
-
-        field_mask = ",".join(mask_parts)
-
-        response = client.get_place(request=request, metadata=[("x-goog-fieldmask", field_mask)])
-
-        # Format response
-        place_data = {
-            "name": response.display_name.text if response.display_name else None,
-            "address": response.formatted_address if response.formatted_address else None,
-            "location": {
-                "lat": response.location.latitude if response.location else None,
-                "lng": response.location.longitude if response.location else None,
-            },
-            "rating": response.rating if hasattr(response, "rating") else None,
-            "types": list(response.types) if response.types else [],
-            "place_id": response.id if response.id else None,
-            "phone_number": (
-                response.national_phone_number if response.national_phone_number else None
-            ),
-            "website": response.website_uri if response.website_uri else None,
-            "price_level": response.price_level if response.price_level else None,
-            "user_ratings_total": (
-                response.user_rating_count if response.user_rating_count else None
-            ),
-        }
-
-        if response.regular_opening_hours:
+        opening = r.get("opening_hours")
+        if opening:
             place_data["opening_hours"] = {
-                "open_now": response.regular_opening_hours.open_now,
-                "periods": [
-                    {
-                        "open": {"day": p.open.day, "hour": p.open.hour, "minute": p.open.minute},
-                        "close": (
-                            {
-                                "day": p.close.day,
-                                "hour": p.close.hour,
-                                "minute": p.close.minute,
-                            }
-                            if p.close
-                            else None
-                        ),
-                    }
-                    for p in response.regular_opening_hours.periods
-                ],
-                "weekday_text": list(response.regular_opening_hours.weekday_descriptions),
+                "open_now": opening.get("open_now"),
+                "weekday_text": opening.get("weekday_text") or [],
             }
 
         return place_data

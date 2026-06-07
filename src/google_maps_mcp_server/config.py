@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import field_validator
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,7 +19,14 @@ class Settings(BaseSettings):
     )
 
     google_maps_api_key: str = ""
-    version: str = "0.2.1"
+    # OtoDock relay (hosted mode): when both are set the server routes Google Maps
+    # calls through the OtoDock relay (which holds the real key, meters usage, and
+    # proxies to Google) instead of using google_maps_api_key directly. Injected by
+    # the OtoDock platform; harmless/unused for standalone (BYO-key) use.
+    otodock_relay_base: str = ""
+    otodock_relay_token: str = ""
+    otodock_relay_error: str = ""
+    version: str = "0.2.2"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     max_results: int = 20
     default_radius_meters: int = 5000
@@ -28,10 +35,17 @@ class Settings(BaseSettings):
     retry_min_wait: float = 1.0
     retry_max_wait: float = 10.0
 
-    @field_validator("google_maps_api_key")
-    @classmethod
-    def validate_api_key(cls, v: str) -> str:
-        """Validate that API key is not empty."""
-        if not v or not v.strip():
-            raise ValueError("GOOGLE_MAPS_API_KEY must be set and not empty")
-        return v
+    @property
+    def relay_enabled(self) -> bool:
+        """True when running via the OtoDock relay (hosted mode)."""
+        return bool(self.otodock_relay_base and self.otodock_relay_token)
+
+    @model_validator(mode="after")
+    def _check_credentials(self) -> "Settings":
+        """Require either a Google Maps API key (BYO) or the OtoDock relay (hosted)."""
+        if not (self.google_maps_api_key.strip() or self.relay_enabled):
+            raise ValueError(
+                "Set GOOGLE_MAPS_API_KEY, or run via the OtoDock relay "
+                "(OTODOCK_RELAY_BASE + OTODOCK_RELAY_TOKEN)."
+            )
+        return self

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-06-07 (OtoDock fork)
+
+### Changed
+
+- **Places `search_places`** reimplemented on the Places API **Text Search**
+  (`googlemaps.Client.places`) to fix multi-word keyword matching. Upstream used
+  Nearby Search + a client-side substring filter that dropped valid matches
+  (e.g. "gas station"). `get_place_details` moved to the same `googlemaps` client;
+  the `google-maps-places` (gapic) dependency is removed.
+
+### Added
+
+- **OtoDock relay support**: when `OTODOCK_RELAY_BASE` + `OTODOCK_RELAY_TOKEN` are
+  set, all Google Maps calls route through the OtoDock relay (which holds the API
+  key, meters usage, and proxies to Google) via a custom base URL + an
+  `X-OtoDock-Relay-Token` header. Bring-your-own-key (`GOOGLE_MAPS_API_KEY`)
+  behaviour is unchanged.
+
 ## [0.2.1] - 2025-11-30
 
 ### Added for version 0.2.1

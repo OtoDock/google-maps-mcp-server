@@ -1,0 +1,25 @@
+google-maps-mcp-server (OtoDock fork)
+
+This product is a fork of "google-maps-mcp-server":
+  Copyright (c) Etty Sekhon <etty.sekhon@gmail.com>
+  Upstream: https://github.com/ettysekhon/google-maps-mcp-server
+  Licensed under the Apache License, Version 2.0.
+
+Modifications in this fork
+(OtoDock — https://github.com/OtoDock/google-maps-mcp-server):
+
+  * Places `search_places`: reimplemented on the Places API Text Search
+    (`googlemaps.Client.places`) to fix multi-word keyword matching. Upstream
+    used Nearby Search plus a client-side substring filter, which dropped valid
+    multi-word matches (e.g. "gas station"). `get_place_details` was moved onto
+    the same `googlemaps` client. This removes the `google-maps-places` (gapic)
+    dependency.
+
+  * OtoDock relay support: when `OTODOCK_RELAY_BASE` + `OTODOCK_RELAY_TOKEN` are
+    set (hosted mode), all Google Maps calls route through the OtoDock relay —
+    which holds the API key, meters usage, and proxies to Google — via a custom
+    base URL plus an `X-OtoDock-Relay-Token` header. Otherwise the configured
+    `GOOGLE_MAPS_API_KEY` is used directly (bring-your-own-key), unchanged.
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this file except in compliance with the License. See the LICENSE file.
