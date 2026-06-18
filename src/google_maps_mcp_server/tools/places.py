@@ -5,7 +5,6 @@ from typing import Any
 
 import googlemaps
 import structlog
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 from .base import BaseTool
 
@@ -111,8 +110,8 @@ class PlacesTool(BaseTool):
         OtoDock fork fix: upstream used Nearby Search + a client-side substring
         keyword filter, which dropped legitimate multi-word matches (e.g. "gas
         station"). Text Search handles keywords natively — no client-side
-        filtering — and rides the same ``self.gmaps`` client, so it works through
-        the OtoDock relay (hosted) or a BYO key transparently.
+        filtering — and rides the same ``self.gmaps`` client as the rest of the
+        tools.
         """
         kwargs: dict[str, Any] = {
             "query": keyword,
@@ -198,14 +197,12 @@ class PlaceDetailsTool(BaseTool):
             logger.error("place_details_failed", error=str(e))
             return self._format_response(None, status="error", error=str(e))
 
-    def _get_place_details(
-        self, place_id: str, fields: list[str] | None = None
-    ) -> dict[str, Any]:
+    def _get_place_details(self, place_id: str, fields: list[str] | None = None) -> dict[str, Any]:
         """Get place details via the Places API Details endpoint (``gmaps.place``).
 
-        OtoDock fork: uses the same ``self.gmaps`` client (relay-aware) as the rest
-        of the tools — no separate gapic client. Friendly short field names are
-        mapped to the lib's field names; unknown names pass through.
+        OtoDock fork: uses the same ``self.gmaps`` client as the rest of the
+        tools — no separate gapic client. Friendly short field names are mapped
+        to the lib's field names; unknown names pass through.
         """
         field_map = {
             "name": "name",
@@ -221,13 +218,19 @@ class PlaceDetailsTool(BaseTool):
             "reviews": "user_ratings_total",
         }
         default_fields = [
-            "name", "formatted_address", "geometry", "rating", "type", "place_id",
-            "formatted_phone_number", "website", "opening_hours", "price_level",
+            "name",
+            "formatted_address",
+            "geometry",
+            "rating",
+            "type",
+            "place_id",
+            "formatted_phone_number",
+            "website",
+            "opening_hours",
+            "price_level",
             "user_ratings_total",
         ]
-        lib_fields = (
-            [field_map.get(f, f) for f in fields] if fields else default_fields
-        )
+        lib_fields = [field_map.get(f, f) for f in fields] if fields else default_fields
 
         result = self.gmaps.place(place_id=place_id, fields=lib_fields)
         r = result.get("result") or {}
@@ -254,37 +257,3 @@ class PlaceDetailsTool(BaseTool):
             }
 
         return place_data
-
-
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-async def search_nearby(gmaps: googlemaps.Client, params: dict[str, Any]) -> dict[str, Any]:
-    """Search for nearby places with retry logic"""
-
-    # Run in executor since googlemaps is synchronous
-    loop = asyncio.get_event_loop()
-
-    result = await loop.run_in_executor(
-        None,
-        lambda: gmaps.places_nearby(
-            location=params["location"],
-            keyword=params["keyword"],
-            radius=params.get("radius", 5000),
-            type=params.get("type"),
-        ),
-    )
-
-    # Clean and format response for fleet safety context
-    places = []
-    for place in result.get("results", [])[:10]:  # Limit results
-        places.append(
-            {
-                "name": place.get("name"),
-                "address": place.get("vicinity"),
-                "location": place.get("geometry", {}).get("location"),
-                "rating": place.get("rating"),
-                "types": place.get("types", []),
-                "place_id": place.get("place_id"),
-            }
-        )
-
-    return {"status": "success", "count": len(places), "places": places}

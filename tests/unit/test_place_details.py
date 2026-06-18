@@ -1,6 +1,11 @@
-"""Unit tests for PlaceDetailsTool."""
+"""Unit tests for PlaceDetailsTool (OtoDock fork — Places Details via ``gmaps.place``).
 
-from unittest.mock import MagicMock, patch
+The fork moved ``get_place_details`` onto the ``googlemaps`` library's Details
+endpoint (``gmaps.place``), dropping the separate gapic client. These tests cover
+that implementation.
+"""
+
+from unittest.mock import MagicMock
 
 import googlemaps
 import pytest
@@ -19,67 +24,81 @@ async def test_place_details_tool_name(mock_settings: Settings) -> None:
 
 
 @pytest.mark.asyncio
-async def test_place_details_execution(mock_settings: Settings) -> None:
-    """Test place details execution with mocked API."""
+async def test_place_details_execution(
+    mock_settings: Settings, mock_gmaps_client: MagicMock
+) -> None:
+    """A Details result is mapped to the tool's place shape."""
+    mock_gmaps_client.place.return_value = {
+        "result": {
+            "name": "Test Place",
+            "formatted_address": "123 Test St",
+            "geometry": {"location": {"lat": 1.0, "lng": 1.0}},
+            "place_id": "pid1",
+            "formatted_phone_number": "555-1234",
+            "website": "http://test.com",
+            "rating": 4.2,
+        }
+    }
     tool = PlaceDetailsTool(mock_settings)
 
-    mock_place = MagicMock()
-    mock_place.display_name.text = "Test Place"
-    mock_place.formatted_address = "123 Test St"
-    mock_place.location.latitude = 1.0
-    mock_place.location.longitude = 1.0
-    mock_place.id = "pid1"
-    mock_place.national_phone_number = "555-1234"
-    mock_place.website_uri = "http://test.com"
-
-    with patch("google_maps_mcp_server.tools.places.places_v1.PlacesClient") as mock_client_class:
-        mock_client = MagicMock()
-        mock_client.get_place.return_value = mock_place
-        mock_client_class.return_value = mock_client
-
-        result = await tool.execute({"place_id": "pid1"})
+    result = await tool.execute({"place_id": "pid1"})
 
     assert result["status"] == "success"
     data = result["data"]
     assert data["name"] == "Test Place"
+    assert data["address"] == "123 Test St"
+    assert data["location"] == {"lat": 1.0, "lng": 1.0}
     assert data["phone_number"] == "555-1234"
     assert data["website"] == "http://test.com"
+    assert data["place_id"] == "pid1"
 
 
 @pytest.mark.asyncio
-async def test_place_details_custom_fields(mock_settings: Settings) -> None:
-    """Test place details with custom fields."""
+async def test_place_details_opening_hours(
+    mock_settings: Settings, mock_gmaps_client: MagicMock
+) -> None:
+    """Opening hours, when present, are flattened into the response."""
+    mock_gmaps_client.place.return_value = {
+        "result": {
+            "name": "Cafe",
+            "opening_hours": {"open_now": True, "weekday_text": ["Mon: 9-5"]},
+        }
+    }
     tool = PlaceDetailsTool(mock_settings)
 
-    mock_place = MagicMock()
-    mock_place.display_name.text = "Test Place"
+    result = await tool.execute({"place_id": "pid1"})
 
-    with patch("google_maps_mcp_server.tools.places.places_v1.PlacesClient") as mock_client_class:
-        mock_client = MagicMock()
-        mock_client.get_place.return_value = mock_place
-        mock_client_class.return_value = mock_client
-
-        await tool.execute({"place_id": "pid1", "fields": ["name", "phone"]})
-
-        call_args = mock_client.get_place.call_args
-        metadata = call_args.kwargs["metadata"]
-        # Check if mask contains mapped fields
-        mask = next(m[1] for m in metadata if m[0] == "x-goog-fieldmask")
-        assert "displayName" in mask
-        assert "nationalPhoneNumber" in mask
+    assert result["data"]["opening_hours"] == {
+        "open_now": True,
+        "weekday_text": ["Mon: 9-5"],
+    }
 
 
 @pytest.mark.asyncio
-async def test_place_details_api_error(mock_settings: Settings) -> None:
-    """Test place details handles API errors."""
+async def test_place_details_custom_fields_mapped(
+    mock_settings: Settings, mock_gmaps_client: MagicMock
+) -> None:
+    """Friendly field names are mapped to the ``googlemaps`` lib's field names."""
+    mock_gmaps_client.place.return_value = {"result": {"name": "Test Place"}}
     tool = PlaceDetailsTool(mock_settings)
 
-    with patch("google_maps_mcp_server.tools.places.places_v1.PlacesClient") as mock_client_class:
-        mock_client = MagicMock()
-        mock_client.get_place.side_effect = googlemaps.exceptions.ApiError("NOT_FOUND")
-        mock_client_class.return_value = mock_client
+    await tool.execute({"place_id": "pid1", "fields": ["name", "phone"]})
 
-        result = await tool.execute({"place_id": "pid1"})
+    fields = mock_gmaps_client.place.call_args.kwargs["fields"]
+    assert "name" in fields
+    assert "formatted_phone_number" in fields  # "phone" → lib name
+
+
+@pytest.mark.asyncio
+async def test_place_details_api_error(
+    mock_settings: Settings, mock_gmaps_client: MagicMock
+) -> None:
+    """``googlemaps.exceptions.ApiError`` is caught and returned as an error response."""
+    mock_gmaps_client.place.side_effect = googlemaps.exceptions.ApiError("NOT_FOUND")
+    tool = PlaceDetailsTool(mock_settings)
+
+    result = await tool.execute({"place_id": "pid1"})
 
     assert result["status"] == "error"
     assert "NOT_FOUND" in result["error"]
+    assert result["tool"] == "get_place_details"

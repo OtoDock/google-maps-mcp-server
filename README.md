@@ -1,12 +1,9 @@
 # Google Maps MCP Server
 
 > **OtoDock fork.** A fork of [ettysekhon/google-maps-mcp-server](https://github.com/ettysekhon/google-maps-mcp-server)
-> (Apache-2.0) maintained by [OtoDock](https://otodock.io). Changes: the Places
-> `search_places` keyword fix (reimplemented on Places **Text Search**) and
-> **OtoDock relay support** — set `OTODOCK_RELAY_BASE` + `OTODOCK_RELAY_TOKEN` to
-> route Google Maps calls through the OtoDock relay (no local API key needed);
-> otherwise it behaves exactly like upstream with your `GOOGLE_MAPS_API_KEY`.
-> See [`NOTICE`](./NOTICE).
+> (Apache-2.0) maintained by [OtoDock](https://otodock.io). Change: the Places
+> `search_places` keyword fix (reimplemented on Places **Text Search**).
+> Configure your own `GOOGLE_MAPS_API_KEY`. See [`NOTICE`](./NOTICE).
 
 [![PyPI](https://img.shields.io/pypi/v/google-maps-mcp-server.svg)](https://pypi.org/project/google-maps-mcp-server/)
 [![Python Version](https://img.shields.io/pypi/pyversions/google-maps-mcp-server.svg)](https://pypi.org/project/google-maps-mcp-server/)

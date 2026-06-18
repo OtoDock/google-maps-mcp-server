@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-18 (OtoDock fork)
+
+### Removed
+
+- **OtoDock relay support** (`OTODOCK_RELAY_BASE` / `OTODOCK_RELAY_TOKEN` /
+  `OTODOCK_RELAY_ERROR`). Routing Google Maps calls through a shared platform key
+  is not permitted under the Google Maps Platform Terms of Service (§3.2.1 no
+  resell/sublicense; §3.2.3(f) no "service bureau" model). The server is now
+  bring-your-own-key only — set `GOOGLE_MAPS_API_KEY`.
+
 ## [0.2.2] - 2026-06-07 (OtoDock fork)
 
 ### Changed

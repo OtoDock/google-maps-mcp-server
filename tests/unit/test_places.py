@@ -1,6 +1,12 @@
-"""Unit tests for Places tool."""
+"""Unit tests for the Places tool (OtoDock fork — Places API **Text Search**).
 
-from unittest.mock import MagicMock, patch
+The fork reimplemented ``search_places`` on the ``googlemaps`` library's Text
+Search (``gmaps.places``), replacing upstream's Nearby Search + client-side
+substring keyword filter (which dropped valid multi-word matches like "gas
+station"). These tests cover that implementation.
+"""
+
+from unittest.mock import MagicMock
 
 import googlemaps
 import pytest
@@ -43,376 +49,149 @@ async def test_places_tool_mcp_conversion() -> None:
 
 
 @pytest.mark.asyncio
-async def test_places_execute_mock(mock_settings: Settings, mock_gmaps_client: MagicMock) -> None:
-    """Test places execution with mocked new Places API client."""
+async def test_places_execute_text_search(
+    mock_settings: Settings, mock_gmaps_client: MagicMock
+) -> None:
+    """A Text Search result is mapped to the tool's place shape."""
+    mock_gmaps_client.places.return_value = {
+        "results": [
+            {
+                "name": "Test Restaurant",
+                "formatted_address": "123 Main St",
+                "geometry": {"location": {"lat": 40.7128, "lng": -74.0060}},
+                "rating": 4.5,
+                "types": ["restaurant"],
+                "place_id": "test_place_id",
+            }
+        ]
+    }
     tool = PlacesTool(mock_settings)
 
-    # Mock the new Places API client and response
-    mock_place = MagicMock()
-    mock_place.display_name.text = "Test Restaurant"
-    mock_place.formatted_address = "123 Main St"
-    mock_place.location.latitude = 40.7128
-    mock_place.location.longitude = -74.0060
-    mock_place.rating = 4.5
-    mock_place.types = ["restaurant"]
-    mock_place.id = "test_place_id"
-
-    mock_response = MagicMock()
-    mock_response.places = [mock_place]
-
-    with patch("google_maps_mcp_server.tools.places.places_v1.PlacesClient") as mock_client_class:
-        mock_client = MagicMock()
-        mock_client.search_nearby.return_value = mock_response
-        mock_client_class.return_value = mock_client
-
-        result = await tool.execute(
-            {
-                "location": "40.7128,-74.0060",
-                "keyword": "restaurant",
-            }
-        )
+    result = await tool.execute({"location": "40.7128,-74.0060", "keyword": "restaurant"})
 
     assert result["status"] == "success"
-    assert "data" in result
-    assert "places" in result["data"]
-    assert len(result["data"]["places"]) == 1
-    assert result["data"]["places"][0]["name"] == "Test Restaurant"
+    assert result["data"]["count"] == 1
+    place = result["data"]["places"][0]
+    assert place["name"] == "Test Restaurant"
+    assert place["address"] == "123 Main St"
+    assert place["location"] == {"lat": 40.7128, "lng": -74.0060}
+    assert place["rating"] == 4.5
+    assert place["types"] == ["restaurant"]
+    assert place["place_id"] == "test_place_id"
 
 
 @pytest.mark.asyncio
-async def test_places_new_api_client_called_with_correct_params(mock_settings: Settings) -> None:
-    """PlacesTool correctly calls the new Places API client with appropriate request parameters."""
+async def test_places_calls_text_search_with_params(
+    mock_settings: Settings, mock_gmaps_client: MagicMock
+) -> None:
+    """The tool forwards keyword/location/radius/type to ``gmaps.places`` (Text Search)."""
+    mock_gmaps_client.places.return_value = {"results": []}
     tool = PlacesTool(mock_settings)
 
-    mock_place = MagicMock()
-    mock_place.display_name.text = "Test Place"
-    mock_place.formatted_address = "123 Test St"
-    mock_place.location.latitude = 37.7749
-    mock_place.location.longitude = -122.4194
-    mock_place.rating = 4.0
-    mock_place.types = ["restaurant"]
-    mock_place.id = "place123"
+    await tool.execute(
+        {
+            "location": "37.7749,-122.4194",
+            "keyword": "restaurant",
+            "radius": 2000,
+            "type": "restaurant",
+        }
+    )
 
-    mock_response = MagicMock()
-    mock_response.places = [mock_place]
-
-    with (
-        patch(
-            "google_maps_mcp_server.tools.places.client_options.ClientOptions"
-        ) as mock_opts_class,
-        patch("google_maps_mcp_server.tools.places.places_v1.PlacesClient") as mock_client_class,
-    ):
-        mock_client = MagicMock()
-        mock_client.search_nearby.return_value = mock_response
-        mock_client_class.return_value = mock_client
-
-        mock_opts = MagicMock()
-        mock_opts_class.return_value = mock_opts
-
-        await tool.execute(
-            {
-                "location": "37.7749,-122.4194",
-                "keyword": "restaurant",
-                "radius": 2000,
-                "type": "restaurant",
-            }
-        )
-
-        # Verify ClientOptions was called with the API key
-        mock_opts_class.assert_called_once_with(api_key=mock_settings.google_maps_api_key)
-
-        # Verify PlacesClient was created with the options
-        mock_client_class.assert_called_once_with(client_options=mock_opts)
-
-        # Verify search_nearby was called
-        assert mock_client.search_nearby.called
-        call_args = mock_client.search_nearby.call_args
-
-        # Verify the request contains correct parameters
-        request = call_args.kwargs["request"]
-        assert request.location_restriction.circle.center.latitude == 37.7749
-        assert request.location_restriction.circle.center.longitude == -122.4194
-        assert request.location_restriction.circle.radius == 2000
-        assert request.included_types == ["restaurant"]
-        assert request.max_result_count == min(20, mock_settings.max_results)
-
-        # Verify metadata includes field mask
-        metadata = call_args.kwargs["metadata"]
-        assert (
-            "x-goog-fieldmask",
-            "places.displayName,places.formattedAddress,places.location,places.rating,places.types,places.id",
-        ) in metadata
+    mock_gmaps_client.places.assert_called_once()
+    kwargs = mock_gmaps_client.places.call_args.kwargs
+    assert kwargs["query"] == "restaurant"
+    assert kwargs["location"] == (37.7749, -122.4194)
+    assert kwargs["radius"] == 2000
+    assert kwargs["type"] == "restaurant"
 
 
 @pytest.mark.asyncio
-async def test_places_keyword_filtering(mock_settings: Settings) -> None:
-    """_search_nearby_new_api correctly filters results by keyword."""
+async def test_places_radius_clamped_to_max(
+    mock_settings: Settings, mock_gmaps_client: MagicMock
+) -> None:
+    """Radius above ``max_radius_meters`` is clamped before the Text Search call."""
+    mock_gmaps_client.places.return_value = {"results": []}
     tool = PlacesTool(mock_settings)
 
-    # Create mock places with different names and types
-    mock_place1 = MagicMock()
-    mock_place1.display_name.text = "Pizza Restaurant"
-    mock_place1.formatted_address = "123 Main St"
-    mock_place1.location.latitude = 40.7128
-    mock_place1.location.longitude = -74.0060
-    mock_place1.rating = 4.5
-    mock_place1.types = ["restaurant", "food"]
-    mock_place1.id = "place1"
+    await tool.execute({"location": "1.0,2.0", "keyword": "park", "radius": 999_999})
 
-    mock_place2 = MagicMock()
-    mock_place2.display_name.text = "Coffee Shop"
-    mock_place2.formatted_address = "456 Main St"
-    mock_place2.location.latitude = 40.7129
-    mock_place2.location.longitude = -74.0061
-    mock_place2.rating = 4.0
-    mock_place2.types = ["cafe", "food"]
-    mock_place2.id = "place2"
-
-    mock_place3 = MagicMock()
-    mock_place3.display_name.text = "Burger Restaurant"
-    mock_place3.formatted_address = "789 Main St"
-    mock_place3.location.latitude = 40.7130
-    mock_place3.location.longitude = -74.0062
-    mock_place3.rating = 4.8
-    mock_place3.types = ["restaurant", "food"]
-    mock_place3.id = "place3"
-
-    mock_response = MagicMock()
-    mock_response.places = [mock_place1, mock_place2, mock_place3]
-
-    with patch("google_maps_mcp_server.tools.places.places_v1.PlacesClient") as mock_client_class:
-        mock_client = MagicMock()
-        mock_client.search_nearby.return_value = mock_response
-        mock_client_class.return_value = mock_client
-
-        # Search for "restaurant" - should match place1 and place3 (by name and type)
-        result = await tool.execute(
-            {
-                "location": "40.7128,-74.0060",
-                "keyword": "restaurant",
-            }
-        )
-
-        assert result["status"] == "success"
-        places = result["data"]["places"]
-        assert len(places) == 2
-        assert places[0]["name"] == "Pizza Restaurant"
-        assert places[1]["name"] == "Burger Restaurant"
+    assert mock_gmaps_client.places.call_args.kwargs["radius"] == mock_settings.max_radius_meters
 
 
 @pytest.mark.asyncio
-async def test_places_handles_api_error_gracefully(mock_settings: Settings) -> None:
-    """PlacesTool handles googlemaps.exceptions.ApiError and returns error response."""
+async def test_places_no_client_side_keyword_filter(
+    mock_settings: Settings, mock_gmaps_client: MagicMock
+) -> None:
+    """The fork's headline fix: Text Search matches keywords server-side, so results
+    whose *name* doesn't literally contain the keyword are still returned (upstream's
+    Nearby Search + substring filter wrongly dropped these, e.g. "gas station")."""
+    mock_gmaps_client.places.return_value = {
+        "results": [
+            {
+                "name": "Shell",
+                "formatted_address": "1 A St",
+                "geometry": {"location": {"lat": 1, "lng": 2}},
+                "types": ["gas_station"],
+                "place_id": "p1",
+            },
+            {
+                "name": "BP",
+                "formatted_address": "2 B St",
+                "geometry": {"location": {"lat": 3, "lng": 4}},
+                "types": ["gas_station"],
+                "place_id": "p2",
+            },
+        ]
+    }
     tool = PlacesTool(mock_settings)
 
-    with patch("google_maps_mcp_server.tools.places.places_v1.PlacesClient") as mock_client_class:
-        mock_client = MagicMock()
-        # Simulate an API error
-        mock_client.search_nearby.side_effect = googlemaps.exceptions.ApiError("PERMISSION_DENIED")
-        mock_client_class.return_value = mock_client
+    result = await tool.execute({"location": "1,2", "keyword": "gas station"})
 
-        result = await tool.execute(
-            {
-                "location": "40.7128,-74.0060",
-                "keyword": "restaurant",
-            }
-        )
+    names = [p["name"] for p in result["data"]["places"]]
+    assert names == ["Shell", "BP"]  # neither name contains "gas station" — both kept
+    assert mock_gmaps_client.places.call_args.kwargs["query"] == "gas station"
+
+
+@pytest.mark.asyncio
+async def test_places_empty_results(mock_settings: Settings, mock_gmaps_client: MagicMock) -> None:
+    """No results → success with an empty list."""
+    mock_gmaps_client.places.return_value = {"results": []}
+    tool = PlacesTool(mock_settings)
+
+    result = await tool.execute({"location": "40.7128,-74.0060", "keyword": "nothing"})
+
+    assert result["status"] == "success"
+    assert result["data"]["places"] == []
+    assert result["data"]["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_places_handles_api_error_gracefully(
+    mock_settings: Settings, mock_gmaps_client: MagicMock
+) -> None:
+    """``googlemaps.exceptions.ApiError`` is caught and returned as an error response."""
+    mock_gmaps_client.places.side_effect = googlemaps.exceptions.ApiError("PERMISSION_DENIED")
+    tool = PlacesTool(mock_settings)
+
+    result = await tool.execute({"location": "40.7128,-74.0060", "keyword": "restaurant"})
+
+    assert result["status"] == "error"
+    assert "PERMISSION_DENIED" in result["error"]
+    assert result["tool"] == "search_places"
+
+
+@pytest.mark.asyncio
+async def test_places_handles_multiple_api_errors(
+    mock_settings: Settings, mock_gmaps_client: MagicMock
+) -> None:
+    """Various ApiError statuses surface in the error response."""
+    tool = PlacesTool(mock_settings)
+
+    for error_msg in ("PERMISSION_DENIED", "REQUEST_DENIED", "OVER_QUERY_LIMIT", "INVALID_REQUEST"):
+        mock_gmaps_client.places.side_effect = googlemaps.exceptions.ApiError(error_msg)
+
+        result = await tool.execute({"location": "40.7128,-74.0060", "keyword": "restaurant"})
 
         assert result["status"] == "error"
-        assert "PERMISSION_DENIED" in result["error"]
+        assert error_msg in result["error"]
         assert result["tool"] == "search_places"
-
-
-@pytest.mark.asyncio
-async def test_places_handles_multiple_api_errors(mock_settings: Settings) -> None:
-    """PlacesTool handles various googlemaps.exceptions.ApiError types during execution."""
-    tool = PlacesTool(mock_settings)
-
-    error_messages = [
-        "PERMISSION_DENIED",
-        "REQUEST_DENIED",
-        "OVER_QUERY_LIMIT",
-        "INVALID_REQUEST",
-    ]
-
-    for error_msg in error_messages:
-        with patch(
-            "google_maps_mcp_server.tools.places.places_v1.PlacesClient"
-        ) as mock_client_class:
-            mock_client = MagicMock()
-            mock_client.search_nearby.side_effect = googlemaps.exceptions.ApiError(error_msg)
-            mock_client_class.return_value = mock_client
-
-            result = await tool.execute(
-                {
-                    "location": "40.7128,-74.0060",
-                    "keyword": "restaurant",
-                }
-            )
-
-            assert result["status"] == "error"
-            assert error_msg in result["error"]
-            assert result["tool"] == "search_places"
-
-
-@pytest.mark.asyncio
-async def test_places_initializes_client_with_all_parameters(mock_settings: Settings) -> None:
-    """PlacesTool correctly initializes Places API client with all required parameters."""
-    tool = PlacesTool(mock_settings)
-
-    mock_place = MagicMock()
-    mock_place.display_name.text = "Test Place"
-    mock_place.formatted_address = "123 Test St"
-    mock_place.location.latitude = 37.7749
-    mock_place.location.longitude = -122.4194
-    mock_place.rating = 4.5
-    mock_place.types = ["restaurant"]
-    mock_place.id = "place123"
-
-    mock_response = MagicMock()
-    mock_response.places = [mock_place]
-
-    with (
-        patch(
-            "google_maps_mcp_server.tools.places.client_options.ClientOptions"
-        ) as mock_opts_class,
-        patch("google_maps_mcp_server.tools.places.places_v1.PlacesClient") as mock_client_class,
-    ):
-        mock_client = MagicMock()
-        mock_client.search_nearby.return_value = mock_response
-        mock_client_class.return_value = mock_client
-
-        mock_opts = MagicMock()
-        mock_opts_class.return_value = mock_opts
-
-        # Execute with all parameters
-        await tool.execute(
-            {
-                "location": "37.7749,-122.4194",
-                "keyword": "restaurant",
-                "radius": 3000,
-                "type": "restaurant",
-            }
-        )
-
-        # Verify ClientOptions initialization with API key
-        mock_opts_class.assert_called_once_with(api_key=mock_settings.google_maps_api_key)
-
-        # Verify PlacesClient initialization with client options
-        mock_client_class.assert_called_once_with(client_options=mock_opts)
-
-        # Verify search_nearby was called exactly once
-        assert mock_client.search_nearby.call_count == 1
-
-
-@pytest.mark.asyncio
-async def test_places_filters_by_keyword_accurately(mock_settings: Settings) -> None:
-    """PlacesTool accurately filters nearby places based on keyword in name and types."""
-    tool = PlacesTool(mock_settings)
-
-    # Create mock places with varying matches
-    mock_place1 = MagicMock()  # Matches in display name
-    mock_place1.display_name.text = "Gas Station A"
-    mock_place1.formatted_address = "100 Main St"
-    mock_place1.location.latitude = 40.7128
-    mock_place1.location.longitude = -74.0060
-    mock_place1.rating = 4.0
-    mock_place1.types = ["establishment"]
-    mock_place1.id = "place1"
-
-    mock_place2 = MagicMock()  # Matches in types
-    mock_place2.display_name.text = "Service Center"
-    mock_place2.formatted_address = "200 Main St"
-    mock_place2.location.latitude = 40.7129
-    mock_place2.location.longitude = -74.0061
-    mock_place2.rating = 4.2
-    mock_place2.types = ["gas_station", "service"]
-    mock_place2.id = "place2"
-
-    mock_place3 = MagicMock()  # No match
-    mock_place3.display_name.text = "Coffee Shop"
-    mock_place3.formatted_address = "300 Main St"
-    mock_place3.location.latitude = 40.7130
-    mock_place3.location.longitude = -74.0062
-    mock_place3.rating = 4.8
-    mock_place3.types = ["cafe", "food"]
-    mock_place3.id = "place3"
-
-    mock_place4 = MagicMock()  # Matches in both name and types (case-insensitive)
-    mock_place4.display_name.text = "GAS STATION B"
-    mock_place4.formatted_address = "400 Main St"
-    mock_place4.location.latitude = 40.7131
-    mock_place4.location.longitude = -74.0063
-    mock_place4.rating = 3.9
-    mock_place4.types = ["gas_station"]
-    mock_place4.id = "place4"
-
-    mock_response = MagicMock()
-    mock_response.places = [mock_place1, mock_place2, mock_place3, mock_place4]
-
-    with patch("google_maps_mcp_server.tools.places.places_v1.PlacesClient") as mock_client_class:
-        mock_client = MagicMock()
-        mock_client.search_nearby.return_value = mock_response
-        mock_client_class.return_value = mock_client
-
-        # Search for "gas" - should match place1, place2, and place4
-        result = await tool.execute(
-            {
-                "location": "40.7128,-74.0060",
-                "keyword": "gas",
-            }
-        )
-
-        assert result["status"] == "success"
-        places = result["data"]["places"]
-        assert len(places) == 3
-        place_names = [p["name"] for p in places]
-        assert "Gas Station A" in place_names
-        assert "Service Center" in place_names
-        assert "GAS STATION B" in place_names
-        assert "Coffee Shop" not in place_names
-
-
-@pytest.mark.asyncio
-async def test_places_empty_keyword_returns_all_results(mock_settings: Settings) -> None:
-    """PlacesTool with empty keyword does not filter results."""
-    tool = PlacesTool(mock_settings)
-
-    mock_place1 = MagicMock()
-    mock_place1.display_name.text = "Restaurant A"
-    mock_place1.formatted_address = "100 Main St"
-    mock_place1.location.latitude = 40.7128
-    mock_place1.location.longitude = -74.0060
-    mock_place1.rating = 4.0
-    mock_place1.types = ["restaurant"]
-    mock_place1.id = "place1"
-
-    mock_place2 = MagicMock()
-    mock_place2.display_name.text = "Cafe B"
-    mock_place2.formatted_address = "200 Main St"
-    mock_place2.location.latitude = 40.7129
-    mock_place2.location.longitude = -74.0061
-    mock_place2.rating = 4.5
-    mock_place2.types = ["cafe"]
-    mock_place2.id = "place2"
-
-    mock_response = MagicMock()
-    mock_response.places = [mock_place1, mock_place2]
-
-    with patch("google_maps_mcp_server.tools.places.places_v1.PlacesClient") as mock_client_class:
-        mock_client = MagicMock()
-        mock_client.search_nearby.return_value = mock_response
-        mock_client_class.return_value = mock_client
-
-        # Search with empty keyword
-        result = await tool.execute(
-            {
-                "location": "40.7128,-74.0060",
-                "keyword": "",
-            }
-        )
-
-        assert result["status"] == "success"
-        # Empty keyword should not filter, but API might return different results
-        # Just verify the call succeeded
-        assert "places" in result["data"]
