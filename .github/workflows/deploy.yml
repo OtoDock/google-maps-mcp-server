@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   GKE_CLUSTER: google-maps-cluster
   GKE_ZONE: europe-west2
