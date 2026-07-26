@@ -1,6 +1,6 @@
 [project]
 name = "google-maps-mcp-server"
-version = "0.3.0"
+version = "0.3.1"
 description = "Production-ready MCP server for Google Maps Platform APIs - Directions, Places, Geocoding, Roads, and Distance Matrix (OtoDock fork: Places keyword fix)"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -126,7 +126,7 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["google_maps_mcp_server.*", "tests.*", "examples.*"]
-disable_error_code = ["misc", "no-untyped-call"]
+disable_error_code = ["misc", "no-untyped-call", "untyped-decorator"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

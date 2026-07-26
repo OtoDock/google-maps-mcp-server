@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-26 (OtoDock fork)
+
+### Security
+
+- Regenerated `uv.lock` against current releases, closing all 61 open
+  Dependabot alerts (including critical authlib and google-adk advisories).
+  Notable transitive bumps: google-adk 2.5, starlette 1.3, mcp 1.28,
+  cryptography 49; declared dependency ranges in `pyproject.toml` are unchanged.
+- CI and deploy workflows now set least-privilege `GITHUB_TOKEN` permissions
+  (`contents: read`; the deploy job keeps `id-token: write` for Workload
+  Identity Federation).
+- `examples/simple_query.py` no longer prints raw GPS coordinates from the
+  snap-to-roads result; it reports a summary instead.
+
 ## [0.3.0] - 2026-06-18 (OtoDock fork)
 
 ### Removed

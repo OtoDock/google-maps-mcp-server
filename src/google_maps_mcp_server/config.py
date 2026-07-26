@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     )
 
     google_maps_api_key: str = ""
-    version: str = "0.3.0"
+    version: str = "0.3.1"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     max_results: int = 20
     default_radius_meters: int = 5000
