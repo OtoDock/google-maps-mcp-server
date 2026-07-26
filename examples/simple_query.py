@@ -159,16 +159,12 @@ async def main() -> None:
     )
 
     if snap_result["status"] == "success":
+        # Coordinates are location data — summarize instead of logging them.
+        snapped_points = snap_result["data"]["snapped_points"]
         print(f"Snapped {snap_result['data']['count']} points to roads")
-        print("Original points → Snapped points:")
-        for i, point in enumerate(snap_result["data"]["snapped_points"][:3]):
-            original_idx = point.get("original_index")
-            original = gps_trace[original_idx if original_idx is not None else i]
-            snapped = point["location"]
-            print(
-                f"  ({original['lat']:.6f}, {original['lng']:.6f}) → "
-                f"({snapped['latitude']:.6f}, {snapped['longitude']:.6f})"
-            )
+        interpolated = sum(1 for p in snapped_points if p.get("original_index") is None)
+        if interpolated:
+            print(f"  ({interpolated} extra points interpolated along the road geometry)")
         print()
     print()
 
