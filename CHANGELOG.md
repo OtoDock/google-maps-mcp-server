@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- `cryptography` 49.0.0 → 50.0.1 in `uv.lock` (PYSEC-2026-3552 / GHSA-g6cj-pr64-35w5).
+
+### Changed
+
+- The package's `__version__` and the health endpoint's version test follow the
+  release instead of a stale literal; every release bumps `pyproject.toml`,
+  `Settings.version` and `__version__` together.
+- CI uploads coverage with codecov-action's current `files` input.
+
+### Removed
+
+- The GKE deploy and PyPI publish workflows inherited from upstream: they were
+  never enabled on this fork and could only fail (no cluster, no PyPI secrets).
+  The tag `vX.Y.Z-otodock` is the release; the OtoDock catalog installs from it.
+
 ## [0.3.1] - 2026-07-26 (OtoDock fork)
 
 ### Security

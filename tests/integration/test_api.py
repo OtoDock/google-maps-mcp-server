@@ -36,13 +36,16 @@ def test_health_endpoint(client: TestClient) -> None:
 
 @pytest.mark.integration
 def test_health_endpoint_version(client: TestClient) -> None:
-    """Test the health endpoint returns the correct version."""
+    """Test the health endpoint returns the package's version."""
+    from google_maps_mcp_server import __version__
+
     response = client.get("/health")
 
     assert response.status_code == 200
     data = response.json()
-    # Version should match what's in config
-    assert data["version"] == "0.2.1"
+    # The endpoint reports the configured version; the package's __version__
+    # and Settings.version are bumped together by every release.
+    assert data["version"] == __version__
 
 
 @pytest.mark.integration
