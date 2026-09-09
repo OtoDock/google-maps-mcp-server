@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-09 (OtoDock fork)
+
 ### Security
 
 - `cryptography` 49.0.0 → 50.0.1 in `uv.lock` (PYSEC-2026-3552 / GHSA-g6cj-pr64-35w5).
